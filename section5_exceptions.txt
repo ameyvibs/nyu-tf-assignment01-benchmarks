@@ -1,0 +1,141 @@
+Section 5: Bad decision #2 (exceptions for risk checks)
+=======================================================
+Supports: (a) a failed check that throws costs ~3,300 ns vs ~0.7 ns returning false;
+(b) average tick-to-trade about 3-5x lower on position and loss after the fix
+(position: 463 ns -> 134 ns), roughly unchanged on basic (limit never hit).
+
+(a) Microbenchmark (single-file C++ program, -O2, Apple M4), 3 runs:
+┌────────────────────────────────────────────┬───────┬───────┬───────┐
+│ case (ns per check)                        │ run 1 │ run 2 │ run 3 │
+├────────────────────────────────────────────┼───────┼───────┼───────┤
+│ first throw ever (one-time)                │ 39625 │ 25791 │ 23500 │
+├────────────────────────────────────────────┼───────┼───────┼───────┤
+│ failed check, throw (avg of 100k)          │  3235 │  3310 │  3269 │
+├────────────────────────────────────────────┼───────┼───────┼───────┤
+│ failed check, return false (avg of 100k)   │   0.7 │   0.7 │   0.7 │
+├────────────────────────────────────────────┼───────┼───────┼───────┤
+│ passed check, nothing thrown (avg of 100k) │   1.3 │   1.3 │   1.4 │
+└────────────────────────────────────────────┴───────┴───────┴───────┘
+
+(b) Full app, tick-to-trade. Before = risk checks throw; fix = checks return a
+[[nodiscard]] bool. Each fixture run 300 times per version, timings pooled,
+run back to back: before -> fix -> before.
+Fixtures gap, quiet, empty_side send only 1-3 orders per run: mostly noise.
+n = messages counted per run. All times in ns.
+
+--- Before (run 1) ---
+commit 2d9a7be-dirty, 300 runs per fixture, Apple M4
+all times in ns; n = deliveries counted per run
+┌────────────┬─────────────────┬────────┬──────┬──────┬──────┬───────┐
+│ fixture    │ metric          │      n │  avg │  p50 │  p95 │   p99 │
+├────────────┼─────────────────┼────────┼──────┼──────┼──────┼───────┤
+│ basic      │ tick-to-trade   │     11 │  193 │   83 │ 1083 │  1292 │
+│ basic      │ handler-all     │     54 │  963 │   42 │ 3625 │ 34458 │
+│ basic      │ handler-sending │     11 │  789 │  333 │ 4667 │  5959 │
+├────────────┼─────────────────┼────────┼──────┼──────┼──────┼───────┤
+│ empty_side │ tick-to-trade   │      3 │  586 │  209 │ 1333 │  3500 │
+│ empty_side │ handler-all     │     42 │ 1779 │   42 │ 4667 │ 34292 │
+│ empty_side │ handler-sending │      3 │ 2411 │  708 │ 5834 │ 11625 │
+├────────────┼─────────────────┼────────┼──────┼──────┼──────┼───────┤
+│ gap        │ tick-to-trade   │      2 │ 2990 │ 4167 │ 5209 │  7250 │
+│ gap        │ handler-all     │     36 │ 2170 │   42 │ 5208 │ 35417 │
+│ gap        │ handler-sending │      2 │ 5160 │ 4709 │ 7041 │ 12875 │
+├────────────┼─────────────────┼────────┼──────┼──────┼──────┼───────┤
+│ loss       │ tick-to-trade   │     16 │  694 │  125 │ 2792 │  3500 │
+│ loss       │ handler-all     │    118 │ 1320 │   42 │ 3916 │  7958 │
+│ loss       │ handler-sending │     16 │ 1183 │  417 │ 4625 │  5750 │
+├────────────┼─────────────────┼────────┼──────┼──────┼──────┼───────┤
+│ position   │ tick-to-trade   │     19 │  463 │   83 │ 2792 │  3583 │
+│ position   │ handler-all     │    117 │  801 │   42 │ 3208 │  7542 │
+│ position   │ handler-sending │     19 │  989 │  417 │ 4333 │  5833 │
+├────────────┼─────────────────┼────────┼──────┼──────┼──────┼───────┤
+│ quiet      │ tick-to-trade   │      1 │ 1168 │ 1083 │ 1459 │  3541 │
+│ quiet      │ handler-all     │     48 │ 1032 │   41 │ 3875 │ 31666 │
+│ quiet      │ handler-sending │      1 │ 5477 │ 4750 │ 8959 │ 15791 │
+├────────────┼─────────────────┼────────┼──────┼──────┼──────┼───────┤
+│ sweep      │ tick-to-trade   │      6 │  296 │  166 │ 1125 │  1333 │
+│ sweep      │ handler-all     │     59 │  852 │   42 │ 3541 │ 30750 │
+│ sweep      │ handler-sending │      6 │ 1268 │  500 │ 5041 │  6083 │
+├────────────┼─────────────────┼────────┼──────┼──────┼──────┼───────┤
+│ big        │ tick-to-trade   │    145 │  129 │   42 │  250 │  2917 │
+│ big        │ handler-all     │ 300417 │   30 │   41 │   84 │   125 │
+│ big        │ handler-sending │    145 │  881 │  291 │ 1667 │ 10917 │
+└────────────┴─────────────────┴────────┴──────┴──────┴──────┴───────┘
+
+--- Fix ---
+commit 2d9a7be, 300 runs per fixture, Apple M4
+all times in ns; n = deliveries counted per run
+┌────────────┬─────────────────┬────────┬──────┬──────┬──────┬───────┐
+│ fixture    │ metric          │      n │  avg │  p50 │  p95 │   p99 │
+├────────────┼─────────────────┼────────┼──────┼──────┼──────┼───────┤
+│ basic      │ tick-to-trade   │     11 │  190 │   83 │  959 │  1250 │
+│ basic      │ handler-all     │     54 │  266 │   42 │  500 │  7958 │
+│ basic      │ handler-sending │     11 │ 1132 │  334 │ 7917 │ 11125 │
+├────────────┼─────────────────┼────────┼──────┼──────┼──────┼───────┤
+│ empty_side │ tick-to-trade   │      3 │  503 │  250 │ 1167 │  2083 │
+│ empty_side │ handler-all     │     42 │  260 │   41 │  666 │  7500 │
+│ empty_side │ handler-sending │      3 │ 3153 │  750 │ 9167 │ 16167 │
+├────────────┼─────────────────┼────────┼──────┼──────┼──────┼───────┤
+│ gap        │ tick-to-trade   │      2 │  636 │  750 │ 1166 │  2125 │
+│ gap        │ handler-all     │     36 │  266 │   41 │  250 │  7708 │
+│ gap        │ handler-sending │      2 │ 4141 │ 3875 │ 9333 │ 16292 │
+├────────────┼─────────────────┼────────┼──────┼──────┼──────┼───────┤
+│ loss       │ tick-to-trade   │     16 │  146 │   42 │  834 │  1167 │
+│ loss       │ handler-all     │    118 │  126 │   41 │  334 │   750 │
+│ loss       │ handler-sending │     16 │  741 │  250 │ 5500 │  7750 │
+├────────────┼─────────────────┼────────┼──────┼──────┼──────┼───────┤
+│ position   │ tick-to-trade   │     19 │  134 │   42 │  791 │  1084 │
+│ position   │ handler-all     │    117 │  145 │   42 │  458 │   917 │
+│ position   │ handler-sending │     19 │  734 │  375 │ 4834 │  7584 │
+├────────────┼─────────────────┼────────┼──────┼──────┼──────┼───────┤
+│ quiet      │ tick-to-trade   │      1 │ 1013 │  917 │ 1292 │  2791 │
+│ quiet      │ handler-all     │     48 │  179 │   41 │  166 │  6416 │
+│ quiet      │ handler-sending │      1 │ 6932 │ 6334 │ 9708 │ 13250 │
+├────────────┼─────────────────┼────────┼──────┼──────┼──────┼───────┤
+│ sweep      │ tick-to-trade   │      6 │  301 │  167 │ 1000 │  1958 │
+│ sweep      │ handler-all     │     59 │  202 │   42 │  541 │  6416 │
+│ sweep      │ handler-sending │      6 │ 1683 │  541 │ 7625 │ 10333 │
+├────────────┼─────────────────┼────────┼──────┼──────┼──────┼───────┤
+│ big        │ tick-to-trade   │    145 │  125 │   42 │  209 │  2833 │
+│ big        │ handler-all     │ 300417 │   30 │   41 │   84 │   125 │
+│ big        │ handler-sending │    145 │  876 │  292 │ 1584 │ 12625 │
+└────────────┴─────────────────┴────────┴──────┴──────┴──────┴───────┘
+
+--- Before (run 2) ---
+commit 2d9a7be-dirty, 300 runs per fixture, Apple M4
+all times in ns; n = deliveries counted per run
+┌────────────┬─────────────────┬────────┬──────┬──────┬──────┬───────┐
+│ fixture    │ metric          │      n │  avg │  p50 │  p95 │   p99 │
+├────────────┼─────────────────┼────────┼──────┼──────┼──────┼───────┤
+│ basic      │ tick-to-trade   │     11 │  207 │   83 │ 1042 │  1334 │
+│ basic      │ handler-all     │     54 │ 1089 │   42 │ 3875 │ 36500 │
+│ basic      │ handler-sending │     11 │  876 │  375 │ 5041 │  7000 │
+├────────────┼─────────────────┼────────┼──────┼──────┼──────┼───────┤
+│ empty_side │ tick-to-trade   │      3 │  531 │  250 │ 1291 │  1958 │
+│ empty_side │ handler-all     │     42 │ 1788 │   42 │ 4542 │ 36959 │
+│ empty_side │ handler-sending │      3 │ 2333 │  708 │ 6000 │ 10500 │
+├────────────┼─────────────────┼────────┼──────┼──────┼──────┼───────┤
+│ gap        │ tick-to-trade   │      2 │ 3021 │ 4208 │ 5500 │  8916 │
+│ gap        │ handler-all     │     36 │ 2209 │   42 │ 5291 │ 35958 │
+│ gap        │ handler-sending │      2 │ 5303 │ 4750 │ 7750 │ 13042 │
+├────────────┼─────────────────┼────────┼──────┼──────┼──────┼───────┤
+│ loss       │ tick-to-trade   │     16 │  732 │  125 │ 3125 │  4167 │
+│ loss       │ handler-all     │    118 │ 1398 │   42 │ 4167 │  8875 │
+│ loss       │ handler-sending │     16 │ 1253 │  417 │ 4625 │  6375 │
+├────────────┼─────────────────┼────────┼──────┼──────┼──────┼───────┤
+│ position   │ tick-to-trade   │     19 │  449 │   83 │ 2792 │  3541 │
+│ position   │ handler-all     │    117 │  816 │   42 │ 3167 │  6959 │
+│ position   │ handler-sending │     19 │  970 │  417 │ 4333 │  5834 │
+├────────────┼─────────────────┼────────┼──────┼──────┼──────┼───────┤
+│ quiet      │ tick-to-trade   │      1 │ 1108 │ 1000 │ 1375 │  4416 │
+│ quiet      │ handler-all     │     48 │ 1099 │   41 │ 3875 │ 34583 │
+│ quiet      │ handler-sending │      1 │ 5346 │ 4750 │ 7875 │ 13167 │
+├────────────┼─────────────────┼────────┼──────┼──────┼──────┼───────┤
+│ sweep      │ tick-to-trade   │      6 │  309 │  167 │ 1125 │  1541 │
+│ sweep      │ handler-all     │     59 │ 1013 │   42 │ 3583 │ 33416 │
+│ sweep      │ handler-sending │      6 │ 1426 │  541 │ 5209 │  9334 │
+├────────────┼─────────────────┼────────┼──────┼──────┼──────┼───────┤
+│ big        │ tick-to-trade   │    145 │  141 │   42 │  250 │  3042 │
+│ big        │ handler-all     │ 300417 │   30 │   41 │   84 │   125 │
+│ big        │ handler-sending │    145 │  881 │  292 │ 1916 │ 11000 │
+└────────────┴─────────────────┴────────┴──────┴──────┴──────┴───────┘

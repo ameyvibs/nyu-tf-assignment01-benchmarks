@@ -1,0 +1,90 @@
+Section 4: Bad decision #1 (fprintf decision log before every send)
+===================================================================
+Supports: tick-to-trade p50 dropped about 3-5x on the supplied fixtures
+(basic: 292 ns -> 83 ns).
+
+Baseline = original trading code (+ evaluation fix). Fix = 32-byte record stored into a
+shared mmap before each send; text log written after the sends.
+Each fixture run 300 times per version, timings pooled, run back to back.
+(The "commit" line inside both outputs shows the same label because the code under test
+was swapped in for each run; the section headers below say which version ran.)
+Fixtures gap, quiet, empty_side send only 1-3 orders per run: mostly noise.
+n = messages counted per run. All times in ns.
+
+--- Baseline (fprintf before send) ---
+commit bf08cd9-dirty, 300 runs per fixture, Apple M4
+all times in ns; n = deliveries counted per run
+┌────────────┬─────────────────┬────────┬──────┬──────┬──────┬───────┐
+│ fixture    │ metric          │      n │  avg │  p50 │  p95 │   p99 │
+├────────────┼─────────────────┼────────┼──────┼──────┼──────┼───────┤
+│ basic      │ tick-to-trade   │     11 │  640 │  292 │ 3792 │  4583 │
+│ basic      │ handler-all     │     54 │  730 │   42 │ 3500 │ 25125 │
+│ basic      │ handler-sending │     11 │  666 │  333 │ 3833 │  4583 │
+├────────────┼─────────────────┼────────┼──────┼──────┼──────┼───────┤
+│ empty_side │ tick-to-trade   │      3 │ 1637 │  625 │ 4000 │  4417 │
+│ empty_side │ handler-all     │     42 │ 1305 │   42 │ 3708 │ 23958 │
+│ empty_side │ handler-sending │      3 │ 1665 │  625 │ 4000 │  4417 │
+├────────────┼─────────────────┼────────┼──────┼──────┼──────┼───────┤
+│ gap        │ tick-to-trade   │      2 │ 4410 │ 4292 │ 5583 │  7167 │
+│ gap        │ handler-all     │     36 │ 1815 │   42 │ 5041 │ 26125 │
+│ gap        │ handler-sending │      2 │ 4486 │ 4375 │ 5708 │  7292 │
+├────────────┼─────────────────┼────────┼──────┼──────┼──────┼───────┤
+│ loss       │ tick-to-trade   │     16 │ 1128 │  375 │ 4042 │  4250 │
+│ loss       │ handler-all     │    118 │ 1293 │   42 │ 4375 │  5291 │
+│ loss       │ handler-sending │     16 │ 1155 │  417 │ 4042 │  4292 │
+├────────────┼─────────────────┼────────┼──────┼──────┼──────┼───────┤
+│ position   │ tick-to-trade   │     19 │  869 │  416 │ 3708 │  4333 │
+│ position   │ handler-all     │    117 │  684 │   42 │ 3250 │  4666 │
+│ position   │ handler-sending │     19 │  895 │  417 │ 3750 │  4334 │
+├────────────┼─────────────────┼────────┼──────┼──────┼──────┼───────┤
+│ quiet      │ tick-to-trade   │      1 │ 4168 │ 4084 │ 4834 │  5209 │
+│ quiet      │ handler-all     │     48 │  834 │   41 │ 3959 │ 26708 │
+│ quiet      │ handler-sending │      1 │ 4197 │ 4125 │ 4875 │  5209 │
+├────────────┼─────────────────┼────────┼──────┼──────┼──────┼───────┤
+│ sweep      │ tick-to-trade   │      6 │ 1067 │  500 │ 4084 │  4500 │
+│ sweep      │ handler-all     │     59 │  701 │   42 │ 3625 │ 25125 │
+│ sweep      │ handler-sending │      6 │ 1092 │  541 │ 4125 │  4541 │
+├────────────┼─────────────────┼────────┼──────┼──────┼──────┼───────┤
+│ big        │ tick-to-trade   │    145 │ 2828 │  250 │ 1750 │ 11541 │
+│ big        │ handler-all     │ 300417 │   32 │   41 │   84 │   125 │
+│ big        │ handler-sending │    145 │ 2868 │  291 │ 1917 │ 11583 │
+└────────────┴─────────────────┴────────┴──────┴──────┴──────┴───────┘
+
+--- Fix (mmap record before send, text log after) ---
+commit bf08cd9-dirty, 300 runs per fixture, Apple M4
+all times in ns; n = deliveries counted per run
+┌────────────┬─────────────────┬────────┬──────┬──────┬───────┬───────┐
+│ fixture    │ metric          │      n │  avg │  p50 │   p95 │   p99 │
+├────────────┼─────────────────┼────────┼──────┼──────┼───────┼───────┤
+│ basic      │ tick-to-trade   │     11 │  210 │   83 │  1042 │  1250 │
+│ basic      │ handler-all     │     54 │  987 │   42 │  3875 │ 33792 │
+│ basic      │ handler-sending │     11 │  807 │  375 │  4500 │  5541 │
+├────────────┼─────────────────┼────────┼──────┼──────┼───────┼───────┤
+│ empty_side │ tick-to-trade   │      3 │  533 │  250 │  1250 │  2291 │
+│ empty_side │ handler-all     │     42 │ 1711 │   42 │  4375 │ 33750 │
+│ empty_side │ handler-sending │      3 │ 2220 │  708 │  5583 │  9542 │
+├────────────┼─────────────────┼────────┼──────┼──────┼───────┼───────┤
+│ gap        │ tick-to-trade   │      2 │ 3072 │ 4208 │  5625 │  9166 │
+│ gap        │ handler-all     │     36 │ 2292 │   42 │  5375 │ 37416 │
+│ gap        │ handler-sending │      2 │ 5341 │ 4791 │  8167 │ 13083 │
+├────────────┼─────────────────┼────────┼──────┼──────┼───────┼───────┤
+│ loss       │ tick-to-trade   │     16 │  741 │  125 │  3084 │  4625 │
+│ loss       │ handler-all     │    118 │ 1431 │   42 │  4125 │  9917 │
+│ loss       │ handler-sending │     16 │ 1266 │  417 │  4667 │  7125 │
+├────────────┼─────────────────┼────────┼──────┼──────┼───────┼───────┤
+│ position   │ tick-to-trade   │     19 │  473 │   83 │  2875 │  3583 │
+│ position   │ handler-all     │    117 │  955 │   42 │  3416 │  9375 │
+│ position   │ handler-sending │     19 │ 1064 │  417 │  4542 │  8334 │
+├────────────┼─────────────────┼────────┼──────┼──────┼───────┼───────┤
+│ quiet      │ tick-to-trade   │      1 │ 1193 │ 1084 │  1500 │  4209 │
+│ quiet      │ handler-all     │     48 │ 1265 │   41 │  4125 │ 38000 │
+│ quiet      │ handler-sending │      1 │ 5985 │ 5041 │ 10125 │ 13750 │
+├────────────┼─────────────────┼────────┼──────┼──────┼───────┼───────┤
+│ sweep      │ tick-to-trade   │      6 │  305 │  167 │  1125 │  1459 │
+│ sweep      │ handler-all     │     59 │ 1018 │   42 │  3583 │ 34500 │
+│ sweep      │ handler-sending │      6 │ 1397 │  541 │  5625 │  8709 │
+├────────────┼─────────────────┼────────┼──────┼──────┼───────┼───────┤
+│ big        │ tick-to-trade   │    145 │  129 │   42 │   250 │  2791 │
+│ big        │ handler-all     │ 300417 │   31 │   41 │    84 │   125 │
+│ big        │ handler-sending │    145 │  950 │  292 │  2041 │ 11292 │
+└────────────┴─────────────────┴────────┴──────┴──────┴───────┴───────┘

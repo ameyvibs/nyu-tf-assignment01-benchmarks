@@ -1,0 +1,43 @@
+Section 3: Good decision (flat array for order lookup vs std::unordered_map)
+============================================================================
+Supports: average per-message handling time (handler-all) 30 ns with the array vs
+63 ns with std::unordered_map.
+
+Scenario: synthetic "big" scenario (200k resting orders, 100k churn events,
+~300k messages), generated with seed 1. Each version run 30 times, timings pooled.
+Run back to back: array -> hash map -> array, so noise is visible (both array runs match).
+The supplied fixtures hold only a few dozen orders and show no difference.
+n = messages counted per run. All times in ns.
+
+--- Run 1: array (original) ---
+commit 59cb3d0, 30 runs per fixture, Apple M4
+all times in ns; n = deliveries counted per run
+┌─────────┬─────────────────┬────────┬─────┬─────┬──────┬───────┐
+│ fixture │ metric          │      n │ avg │ p50 │  p95 │   p99 │
+├─────────┼─────────────────┼────────┼─────┼─────┼──────┼───────┤
+│ big     │ tick-to-trade   │    145 │ 769 │ 250 │ 1250 │ 11334 │
+│ big     │ handler-all     │ 300417 │  29 │  41 │   84 │   125 │
+│ big     │ handler-sending │    145 │ 807 │ 250 │ 1375 │ 11334 │
+└─────────┴─────────────────┴────────┴─────┴─────┴──────┴───────┘
+
+--- Run 2: std::unordered_map ---
+commit 820f057, 30 runs per fixture, Apple M4
+all times in ns; n = deliveries counted per run
+┌─────────┬─────────────────┬────────┬─────┬─────┬──────┬───────┐
+│ fixture │ metric          │      n │ avg │ p50 │  p95 │   p99 │
+├─────────┼─────────────────┼────────┼─────┼─────┼──────┼───────┤
+│ big     │ tick-to-trade   │    145 │ 776 │ 250 │ 1625 │ 11167 │
+│ big     │ handler-all     │ 300417 │  63 │  42 │  208 │   292 │
+│ big     │ handler-sending │    145 │ 813 │ 291 │ 1667 │ 11208 │
+└─────────┴─────────────────┴────────┴─────┴─────┴──────┴───────┘
+
+--- Run 3: array again ---
+commit 59cb3d0, 30 runs per fixture, Apple M4
+all times in ns; n = deliveries counted per run
+┌─────────┬─────────────────┬────────┬─────┬─────┬──────┬───────┐
+│ fixture │ metric          │      n │ avg │ p50 │  p95 │   p99 │
+├─────────┼─────────────────┼────────┼─────┼─────┼──────┼───────┤
+│ big     │ tick-to-trade   │    145 │ 777 │ 250 │ 1625 │ 11167 │
+│ big     │ handler-all     │ 300417 │  30 │  41 │   84 │   125 │
+│ big     │ handler-sending │    145 │ 815 │ 250 │ 1791 │ 11209 │
+└─────────┴─────────────────┴────────┴─────┴─────┴──────┴───────┘
